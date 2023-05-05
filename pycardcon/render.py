@@ -1,77 +1,114 @@
-import json
 from PIL import Image, ImageDraw, ImageFont
 from cairosvg import svg2png
 from io import BytesIO
 
-from pymse.text import parse
-from pymse.util import read_card
+from pycardcon.text import parse
+from pycardcon.util import read_card
+from pycardcon.errors import InvalidTextRegion
 
 SYMBOL_RATIO = 0.865
 DROP_SHADOW_RATIO = 0.1
 LINE_MARGIN_RATIO = 0.02
+NEWLINE_MARGIN = 0.5
 DESCENDER_ADJUSTMENT_RATIO = 0.1
 FONT_REDUCTION_ON_FAIL_RATIO = 0.9
 
+## Helper Methods ##
+def scale_art_bounds(art_obj, art_img, card_size):
+    art_x = int(art_obj['x']*card_size[0])
+    art_y = int(art_obj['y']*card_size[1])
+    art_w = int(art_img.size[0]*art_obj['zoom'])
+    art_h = int(art_img.size[1]*art_obj['zoom'])
+    return art_x, art_y, art_w, art_h
+
+
+def scale_bounds(bounds, size):
+    x = bounds['x'] * size[0]
+    y = bounds['y'] * size[1]
+    w = bounds['width'] * size[0]
+    h = bounds['height'] * size[1]
+    return int(x), int(y), int(w), int(h)
+
+
+"""
+Handles the case's where it's a svg and needs to be converted. 
+"""
+def read_maybe_svg_file(mask_fn):
+    if ".svg" in mask_fn:
+        with open(mask_fn, 'rb') as mask_f:
+            mask_svg = svg2png(mask_f.read())
+        return Image.open(BytesIO(mask_svg))
+    else:
+        return Image.open(mask_fn)
+
+
+## Per-Card-Component Draw Methods. ##
 def draw_art(card_img, art_obj, img_root):
+    if art_obj['src'] == '':
+        return card_img
+
     art_fn = f"{img_root}/{art_obj['src']}"
     art_img = Image.open(art_fn)
 
-    art_x = int(art_obj['x']*card_img.size[0])
-    art_y = int(art_obj['y']*card_img.size[1])
-    art_w = int(art_img.size[0]*art_obj['zoom'])
-    art_h = int(art_img.size[1]*art_obj['zoom'])
-
+    art_x, art_y, art_w, art_h = scale_art_bounds(art_obj, art_img, card_img.size)
     card_img.paste(art_img.resize((art_w, art_h)), (art_x, art_y))
     return card_img
 
 
 def draw_frames(card_img, frames):
     for frame in frames:
-        frame_padded = Image.new("RGBA", (card_img.size[0], card_img.size[1]), (0, 0, 0, 0))
-        f_x = frame['bounds']['x'] * card_img.size[0]
-        f_y = frame['bounds']['y'] * card_img.size[1]
-        f_w = frame['bounds']['width'] * card_img.size[0]
-        f_h = frame['bounds']['height'] * card_img.size[1]
+        frame_padded = Image.new("RGBA", card_img.size, (0, 0, 0, 0))
+        f_x, f_y, f_w, f_h = scale_bounds(frame['bounds'], card_img.size)
 
         if 'alphaShade' in frame:
-            shade_img = Image.new("RGBA", (int(f_w), int(f_h)), frame['value'])
-            frame_padded.paste(shade_img, (int(f_x), int(f_y)))
+            shade_img = Image.new("RGBA", (f_w, f_h), frame['value'])
+            frame_padded.paste(shade_img, (f_x, f_y))
         else:
             frame_img = Image.open(frame['fn'])
-            frame_img = frame_img.resize((int(f_w), int(f_h)))
+            frame_img = frame_img.resize((f_w, f_h))
+            frame_padded.paste(frame_img, (f_x, f_y))
 
-            if 'selfMask' in frame and frame['selfMask']:
-                frame_padded.paste(frame_img, (int(f_x), int(f_y)))
-            else:
-                frame_padded.paste(frame_img, (int(f_x), int(f_y)))
+            blending = False
+            if 'blend' in frame:
+                blending = True
+                blend_img = Image.open(frame['blend']['fn'])
+                blend_img = blend_img.resize(frame_padded.size)
+                masked_blend = blend_img  # Done to get rid of another 'blending?' check later.
 
             if 'masks' in frame:
-                current_frame = Image.new("RGBA", (card_img.size[0], card_img.size[1]), (0, 0, 0, 0))
+                masked_blend = Image.new("RGBA", frame_padded.size)
+                masked_frame = Image.new("RGBA", frame_padded.size)
                 for mask in frame['masks']:
-                    if ".svg" in mask['fn']:
-                        with open(mask['fn'], 'rb') as mask_f:
-                            mask_svg = svg2png(mask_f.read())
-                        mask_img = Image.open(BytesIO(mask_svg))
-                    else:
-                        mask_img = Image.open(mask['fn'])
+                    mask_img = read_maybe_svg_file(mask['fn'])
                     mask_img = mask_img.convert("RGBA")
+                    mask_img = mask_img.resize(frame_padded.size)
+                    masked_frame.paste(frame_padded, mask=mask_img)
 
-                    current_frame = Image.composite(frame_padded, current_frame, mask=mask_img)
+                    if blending:
+                        masked_blend.paste(blend_img, mask=mask_img)
 
-                frame_padded.paste(current_frame, (int(f_x), int(f_y)))
-                frame_padded = current_frame
+                frame_padded = masked_frame
 
-        card_img = Image.alpha_composite(card_img, frame_padded)
+            if blending:
+                # If blending w.o masking, this would result in a 'blank' alpha w.o the commented line above.
+                frame_padded.putalpha(masked_blend.getchannel("A"))
+
+        card_img.alpha_composite(frame_padded)
     return card_img
 
 
 def draw_text(card_img, card, resource_root):
     for text_region in card['textRegions']:
-        render_text_region(card_img, card, card['textRegions'][text_region], resource_root)
+        render_text_region(card_img, card, text_region, card['textRegions'][text_region], resource_root)
     return card_img
 
 
-def render_text_region(img, card_obj, text_region, resource_root):
+def render_text_region(img, card_obj, text_region_name, text_region, resource_root):
+
+    for field in ['text', 'size', 'width', 'height', 'x', 'y']:
+        if field not in text_region:
+            raise InvalidTextRegion(text_region_name, field)
+
     tokens   = parse(text_region['text'], resource_root)
     fontsize = int(text_region['size']*img.size[1])
     tr_w     = int(text_region['width']*img.size[0])
@@ -106,7 +143,7 @@ def render_text_region(img, card_obj, text_region, resource_root):
             if token['token_type'] == 'newline':
                 paint_cur_line(cur_line_img, cur_x, cur_y_tr)
                 cur_x = 0
-                cur_y_tr += int(fontsize * (1 + 3 * LINE_MARGIN_RATIO))
+                cur_y_tr += int(fontsize*(1+NEWLINE_MARGIN))
 
                 cur_line_img  = Image.new("RGBA", (tr_w, int(fontsize*(1+DESCENDER_ADJUSTMENT_RATIO))), (0, 0, 0, 0))
                 cur_line_draw = ImageDraw.Draw(cur_line_img)
@@ -209,18 +246,11 @@ def render_text_region(img, card_obj, text_region, resource_root):
     return img
 
 
-def draw_set_symbol(img, set_symbol_meta, img_root):
-    # This is basically a copy/paste of the art one, but in the
-    # future I might have it handle something like automatically
-    # mapping a rarity value to an image? idk.
-    ss_fn = f"{img_root}/{set_symbol_meta['src']}"
-    ss_img = Image.open(ss_fn)
-    ss_x = int(set_symbol_meta['x']*img.size[0])
-    ss_y = int(set_symbol_meta['y']*img.size[1])
-    ss_w = int(ss_img.size[0]*set_symbol_meta['zoom'])
-    ss_h = int(ss_img.size[1]*set_symbol_meta['zoom'])
-    # ss_img.resize((ss_w, ss_h)), (ss_x, ss_y)
-    # ss_img.re
+def draw_set_symbol(img, card, resource_root):
+    symbol_fn = f"{resource_root}/setSymbols/{card['infoSet']}/{card['infoSet']}_{card['infoRarity']}.png"
+    ss_img = Image.open(symbol_fn)
+    set_symbol_meta = card['setSymbol']
+    ss_x, ss_y, ss_w, ss_h = scale_art_bounds(set_symbol_meta, ss_img, img.size)
     img.alpha_composite(ss_img.resize((ss_w, ss_h)), (ss_x, ss_y))
     return img
 
@@ -279,38 +309,13 @@ def draw_bottom_region(img, card_obj, resource_root):
 
 def render_card_json(card_dir, card_fn, resource_path, output_dir):
     card_obj = read_card(f"{card_dir}/{card_fn}", resource_path)['data']
-
     card_img = Image.new("RGBA", (card_obj['card']['width'], card_obj['card']['height']), (0, 0, 0, 0))
 
     card_img = draw_art(card_img, card_obj['art'], card_dir)
     card_img = draw_frames(card_img, card_obj['frames'])
     card_img = draw_text(card_img, card_obj, resource_path)
-    card_img = draw_set_symbol(card_img, card_obj['setSymbol'], card_dir)
+    card_img = draw_set_symbol(card_img, card_obj, resource_path)
     card_img = draw_bottom_region(card_img, card_obj, resource_path)
 
     output_fn = f"{output_dir}/{card_obj['textRegions']['display-title']['text']}.png"
     card_img.save(output_fn)
-
-
-def render_frame_regions(meta_path, frame):
-    with open(f"{meta_path}/frame_pack_meta.json", 'rb') as f:
-        meta_obj = json.load(f)
-
-    frame_img = Image.open(f"{meta_path}/{meta_obj['frames'][frame]['path']}")
-    frame_img = frame_img.convert("RGB")
-    frame_draw = ImageDraw.Draw(frame_img, "RGBA")
-
-    frame_dg_name = meta_obj['frames'][frame]['defaultGroup']
-    frame_dg = meta_obj['defaultGroups'][frame_dg_name]
-
-    for text_region_name in frame_dg['defaultTextFields']:
-        text_region = frame_dg['defaultTextFields'][text_region_name]
-
-        tr_x  = int(text_region['x']*frame_img.size[0])
-        tr_y  = int(text_region['y']*frame_img.size[1])
-        tr_x2 = tr_x+int(text_region['width']*frame_img.size[0])
-        tr_y2 = tr_y+int(text_region['height']*frame_img.size[1])
-
-        frame_draw.rectangle((tr_x, tr_y, tr_x2, tr_y2), fill=(100, 100, 100, 125))
-
-    frame_img.save("test_view_frame.png")

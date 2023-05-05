@@ -1,6 +1,6 @@
 import dearpygui.dearpygui as dpg
 import os
-from pymse import util
+from pycardcon import util
 
 def run(root_dir, resource_dir, out_dir):
     dpg.create_context()

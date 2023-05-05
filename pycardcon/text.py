@@ -6,6 +6,8 @@ symbols).
 
 Ideally this collection will be passed to the line-break algorithm, but it could also be used
 in a similar manner to the cardconjurer script.
+
+TODO - Have this handle references to various symbols in a different way. I'd like to isolate the image files more.
 """
 def parse(text, resource_root):
     text_tokens_raw = text.split(" ")
@@ -93,11 +95,18 @@ def parse_cmd_word(word, resource_root):
                 "color": "C",
                 "path_to_img": f"{resource_root}/manaSymbols/c.svg"
              }
-        case "t":
+        case "t" | "T":
             return {
                 "token_type": "symbol",
                 "sub_type": "tap",
                 "path_to_img": f"{resource_root}/manaSymbols/t.svg"
+            }
+        case "0":
+            return {
+                "token_type": "symbol",
+                "sub_type": "numeral",
+                "value": 0,
+                "path_to_img": f"{resource_root}/manaSymbols/0.svg"
             }
         case "1":
             return {
@@ -148,7 +157,13 @@ def parse_cmd_word(word, resource_root):
                 "value": 0,
                 "path_to_img": f"{resource_root}/manaSymbols/x.svg"
             }
-
+        case "S" | "s" | "snow":
+            return {
+                "token_type": "symbol",
+                "sub_type": "numeral",
+                "value": 1,
+                "path_to_img": f"{resource_root}/manaSymbols/s.svg"
+            }
         case "cardname":
             return {
                 "token_type": "card_meta",
