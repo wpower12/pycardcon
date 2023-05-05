@@ -1,3 +1,5 @@
+import os.path
+
 from PIL import Image, ImageDraw, ImageFont
 from cairosvg import svg2png
 from io import BytesIO
@@ -47,8 +49,9 @@ def draw_art(card_img, art_obj, img_root):
     if art_obj['src'] == '':
         return card_img
 
-    art_fn = f"{img_root}/{art_obj['src']}"
-    art_img = Image.open(art_fn)
+    # art_fn = f"{img_root}/{art_obj['src']}"
+    art_path = os.path.join(img_root, art_obj['src'])
+    art_img = Image.open(art_path)
 
     art_x, art_y, art_w, art_h = scale_art_bounds(art_obj, art_img, card_img.size)
     card_img.paste(art_img.resize((art_w, art_h)), (art_x, art_y))
@@ -64,14 +67,14 @@ def draw_frames(card_img, frames):
             shade_img = Image.new("RGBA", (f_w, f_h), frame['value'])
             frame_padded.paste(shade_img, (f_x, f_y))
         else:
-            frame_img = Image.open(frame['fn'])
+            frame_img = Image.open(os.path.join(frame['fn']))
             frame_img = frame_img.resize((f_w, f_h))
             frame_padded.paste(frame_img, (f_x, f_y))
 
             blending = False
             if 'blend' in frame:
                 blending = True
-                blend_img = Image.open(frame['blend']['fn'])
+                blend_img = Image.open(os.path.join(frame['blend']['fn']))
                 blend_img = blend_img.resize(frame_padded.size)
                 masked_blend = blend_img  # Done to get rid of another 'blending?' check later.
 
@@ -79,7 +82,7 @@ def draw_frames(card_img, frames):
                 masked_blend = Image.new("RGBA", frame_padded.size)
                 masked_frame = Image.new("RGBA", frame_padded.size)
                 for mask in frame['masks']:
-                    mask_img = read_maybe_svg_file(mask['fn'])
+                    mask_img = read_maybe_svg_file(os.path.join(mask['fn']))
                     mask_img = mask_img.convert("RGBA")
                     mask_img = mask_img.resize(frame_padded.size)
                     masked_frame.paste(frame_padded, mask=mask_img)
@@ -124,7 +127,8 @@ def render_text_region(img, card_obj, text_region_name, text_region, resource_ro
         text_region['verticalAlign'] = 'top'
 
     def attempt_render(text_image):
-        text_font = ImageFont.truetype(f"resources/fonts/{text_region['font']}", fontsize)
+        text_font_path = os.path.join(resource_root, "fonts", text_region['font'])
+        text_font = ImageFont.truetype(text_font_path, fontsize)
         cur_line_img  = Image.new("RGBA", (tr_w, int(fontsize*(1+DESCENDER_ADJUSTMENT_RATIO))), (0, 0, 0, 0))
         cur_line_draw = ImageDraw.Draw(cur_line_img)
         cur_x, cur_y_tr = 0, 0
@@ -164,7 +168,7 @@ def render_text_region(img, card_obj, text_region_name, text_region, resource_ro
                 cur_x += int(token_width)
 
             if token['token_type'] == 'symbol':
-                with open(token['path_to_img'], 'rb') as mask_f:
+                with open(os.path.join(token['path_to_img']), 'rb') as mask_f:
                     mana_svg = svg2png(mask_f.read())
 
                 symbol_size = int(fontsize*SYMBOL_RATIO)
@@ -213,10 +217,11 @@ def render_text_region(img, card_obj, text_region_name, text_region, resource_ro
 
             if token['token_type'] == 'font_change':
                 if token['val'] == 0:
-                    text_font = ImageFont.truetype(f"resources/fonts/{text_region['font']}", fontsize)
+                    font_path = os.path.join(resource_root, "fonts", text_region['font'])
                 else:
                     font_str = text_region['font'].replace(".ttf", "-i.ttf")
-                    text_font = ImageFont.truetype(f"resources/fonts/{font_str}", fontsize)
+                    font_path = os.path.join(resource_root, "fonts", font_str)
+                text_font = ImageFont.truetype(font_path, fontsize)
 
             if cur_y_tr+fontsize > text_region['height']*img.size[1]:
                 return False, 0
@@ -247,8 +252,10 @@ def render_text_region(img, card_obj, text_region_name, text_region, resource_ro
 
 
 def draw_set_symbol(img, card, resource_root):
-    symbol_fn = f"{resource_root}/setSymbols/{card['infoSet']}/{card['infoSet']}_{card['infoRarity']}.png"
-    ss_img = Image.open(symbol_fn)
+    symbol_fn = f"{card['infoSet']}_{card['infoRarity']}.png"
+    symbol_path = os.path.join(resource_root, "setSymbols", card['infoSet'], symbol_fn)
+
+    ss_img = Image.open(symbol_path)
     set_symbol_meta = card['setSymbol']
     ss_x, ss_y, ss_w, ss_h = scale_art_bounds(set_symbol_meta, ss_img, img.size)
     img.alpha_composite(ss_img.resize((ss_w, ss_h)), (ss_x, ss_y))
@@ -261,7 +268,8 @@ def draw_bottom_region(img, card_obj, resource_root):
     # Top Left
     tl_obj = card_obj['bottomInfo']['topLeft']
     tl_fontsize = int(tl_obj['size']*img.size[1])
-    set_font = ImageFont.truetype(f"{resource_root}/fonts/gotham-medium.ttf", tl_fontsize)
+    font_path = os.path.join(resource_root, "fonts", "gotham-medium.ttf")
+    set_font = ImageFont.truetype(font_path, tl_fontsize)
     tl_x = int(tl_obj['x']*img.size[0])
     tl_y = int(tl_obj['y']*img.size[1])
     tl_str = f"{card_obj['infoNumber']:<16}{card_obj['infoRarity']}"
@@ -279,8 +287,8 @@ def draw_bottom_region(img, card_obj, resource_root):
     ml_x += int(card_draw.textlength(ml_set_str, font=set_font))
 
     # artist brush
-    brush_fn = f"{resource_root}/manaSymbols/artistbrush.svg"
-    with open(brush_fn, 'rb') as brush_f:
+    brush_path = os.path.join(resource_root, "manaSymbols", "artistbrush.svg")
+    with open(brush_path, 'rb') as brush_f:
         brush_svg = svg2png(brush_f.read())
     brush_img = Image.open(BytesIO(brush_svg))
     brush_zoom = (tl_fontsize/brush_img.size[1])*0.8
@@ -291,7 +299,8 @@ def draw_bottom_region(img, card_obj, resource_root):
 
     # artist line
     artist_fontsize = int(card_obj['bottomInfo']['midLeft']['size']*img.size[1])
-    artist_font = ImageFont.truetype(f"{resource_root}/fonts/beleren-bsc.ttf", artist_fontsize)
+    art_font_path = os.path.join(resource_root, "fonts", "beleren-bsc.ttf")
+    artist_font = ImageFont.truetype(art_font_path, artist_fontsize)
     # TODO - fix this hack. without it the artist line sinks below flush. might be an issue with anchor choice?
     ml_y -= 12
     card_draw.text((ml_x, ml_y), card_obj['art']['artist'], font=artist_font, fill=card_obj['bottomInfo']['midLeft']['color'])
@@ -299,7 +308,8 @@ def draw_bottom_region(img, card_obj, resource_root):
     # bottom left - NOTE FOR SALE
     bl_x = tl_x
     bl_y = int(card_obj['bottomInfo']['bottomLeft']['y']*img.size[1])
-    nfs_font = ImageFont.truetype(f"{resource_root}/fonts/gotham-medium.ttf", int(0.8*tl_fontsize))
+    nfs_font_path = os.path.join(resource_root, "fonts", "gotham-medium.ttf")
+    nfs_font = ImageFont.truetype(nfs_font_path, int(0.8*tl_fontsize))
     card_draw.text((bl_x, bl_y),
                    card_obj['bottomInfo']['bottomLeft']['text'],
                    font=nfs_font,
@@ -308,7 +318,7 @@ def draw_bottom_region(img, card_obj, resource_root):
 
 
 def render_card_json(card_dir, card_fn, resource_path, output_dir):
-    card_obj = read_card(f"{card_dir}/{card_fn}", resource_path)['data']
+    card_obj = read_card(os.path.join(card_dir, card_fn), resource_path)['data']
     card_img = Image.new("RGBA", (card_obj['card']['width'], card_obj['card']['height']), (0, 0, 0, 0))
 
     card_img = draw_art(card_img, card_obj['art'], card_dir)
@@ -317,5 +327,5 @@ def render_card_json(card_dir, card_fn, resource_path, output_dir):
     card_img = draw_set_symbol(card_img, card_obj, resource_path)
     card_img = draw_bottom_region(card_img, card_obj, resource_path)
 
-    output_fn = f"{output_dir}/{card_obj['textRegions']['display-title']['text']}.png"
-    card_img.save(output_fn)
+    output_path = os.path.join(output_dir, f"{card_obj['textRegions']['display-title']['text']}.png")
+    card_img.save(output_path)

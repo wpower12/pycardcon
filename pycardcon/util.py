@@ -1,4 +1,5 @@
 import json
+import os.path
 
 """
 Reads a cards json from the fn, and searches for the necessary frame packs to build up the full set of
@@ -323,7 +324,8 @@ def copy_or_overwrite_defaults(user_obj, defaults_obj):
 
 
 def load_fp_meta_file(frame_pack_path, resource_dir):
-    fp_meta_fn = f"{resource_dir}/{frame_pack_path}/frame_pack_meta.json"
-    with open(fp_meta_fn, 'rb') as meta_f:
+    fp_meta_path = os.path.join(resource_dir, frame_pack_path, "frame_pack_meta.json")
+    # fp_meta_fn = f"{resource_dir}/{frame_pack_path}/frame_pack_meta.json"
+    with open(fp_meta_path, 'rb') as meta_f:
         meta_obj = json.load(meta_f)
     return meta_obj
